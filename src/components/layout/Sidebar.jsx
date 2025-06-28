@@ -17,6 +17,12 @@ export default function Sidebar() {
             <Link to="/historique" className="nav-link text-white">🕓 Historique</Link>
         </li>
 
+        <li className="nav-item">
+          <Link to="/simulation" className="nav-link text-white">
+            📉 Simulation
+          </Link>
+        </li>
+
 
       </ul>
     </div>
