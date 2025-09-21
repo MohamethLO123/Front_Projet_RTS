@@ -23,6 +23,7 @@ export default function Simulation() {
     pertes: 10.9
   });
 
+  const [mode, setMode] = useState("distance"); // "distance" ou "frequence"
   const [graphData, setGraphData] = useState(null);
   const chartRef = useRef();
 
@@ -33,36 +34,71 @@ export default function Simulation() {
   const handleSimuler = () => {
     const { pe, g1, g2, f, pertes } = form;
     const c = 3e8;
-    const freq = parseFloat(f) * 1e9;
-    const lambda = c / freq;
-    const distances = [];
+
+    const xAxis = [];
     const pr_values = [];
 
-    for (let d = 1; d <= 100; d++) {
-      const d_m = d * 1000;
-      const L = 20 * Math.log10((4 * Math.PI * d_m) / lambda);
-      const pr =
-        parseFloat(pe) +
-        parseFloat(g1) +
-        parseFloat(g2) -
-        L -
-        parseFloat(pertes);
-      distances.push(d);
-      pr_values.push(pr.toFixed(2));
+    if (mode === "distance") {
+      const freq = parseFloat(f) * 1e9;
+      const lambda = c / freq;
+
+      for (let d = 1; d <= 100; d++) {
+        const d_m = d * 1000;
+        const L = 20 * Math.log10((4 * Math.PI * d_m) / lambda);
+        const pr =
+          parseFloat(pe) +
+          parseFloat(g1) +
+          parseFloat(g2) -
+          L -
+          parseFloat(pertes);
+        xAxis.push(d);
+        pr_values.push(pr.toFixed(2));
+      }
+
+      setGraphData({
+        labels: xAxis,
+        datasets: [
+          {
+            label: "Puissance reçue (dBm) vs Distance (km)",
+            data: pr_values,
+            borderColor: "rgb(75, 192, 192)",
+            fill: false,
+            tension: 0.1
+          }
+        ]
+      });
     }
 
-    setGraphData({
-      labels: distances,
-      datasets: [
-        {
-          label: "Puissance reçue (dBm)",
-          data: pr_values,
-          fill: false,
-          borderColor: "rgb(75, 192, 192)",
-          tension: 0.1
-        }
-      ]
-    });
+    if (mode === "frequence") {
+      const d_m = 50000; // distance fixe à 50 km
+
+      for (let f_ghz = 1; f_ghz <= 15; f_ghz++) {
+        const freq = f_ghz * 1e9;
+        const lambda = c / freq;
+        const L = 20 * Math.log10((4 * Math.PI * d_m) / lambda);
+        const pr =
+          parseFloat(pe) +
+          parseFloat(g1) +
+          parseFloat(g2) -
+          L -
+          parseFloat(pertes);
+        xAxis.push(f_ghz);
+        pr_values.push(pr.toFixed(2));
+      }
+
+      setGraphData({
+        labels: xAxis,
+        datasets: [
+          {
+            label: "Puissance reçue (dBm) vs Fréquence (GHz)",
+            data: pr_values,
+            borderColor: "rgb(255, 99, 132)",
+            fill: false,
+            tension: 0.1
+          }
+        ]
+      });
+    }
   };
 
   const handleExport = async () => {
@@ -85,7 +121,19 @@ export default function Simulation() {
 
   return (
     <div className="container mt-5">
-      <h2 className="mb-4">📉 Simulation : Puissance reçue vs Distance</h2>
+      <h2 className="mb-4">📉 Simulation : Puissance reçue</h2>
+
+      <div className="mb-4">
+        <label className="form-label"><strong>Type de simulation :</strong></label>
+        <select
+          className="form-select w-auto"
+          value={mode}
+          onChange={(e) => setMode(e.target.value)}
+        >
+          <option value="distance">📏 Puissance vs Distance</option>
+          <option value="frequence">📡 Puissance vs Fréquence</option>
+        </select>
+      </div>
 
       <div className="row">
         {[

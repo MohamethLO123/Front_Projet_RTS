@@ -1,6 +1,20 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import ResultCard from "./ResultCard";
+import { Line } from "react-chartjs-2";
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Tooltip,
+  Legend
+} from "chart.js";
 import Swal from "sweetalert2";
+import jsPDF from "jspdf";
+import html2canvas from "html2canvas";
+
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend);
 
 export default function HertzianForm({ addToHistory }) {
   const [form, setForm] = useState({
@@ -13,6 +27,9 @@ export default function HertzianForm({ addToHistory }) {
   });
 
   const [result, setResult] = useState(null);
+  const [graphData, setGraphData] = useState(null);
+  const chartRef = useRef();
+  const reportRef = useRef();
 
   const handleChange = (e) => {
     setForm({ ...form, [e.target.name]: e.target.value });
@@ -26,45 +43,75 @@ export default function HertzianForm({ addToHistory }) {
         body: JSON.stringify(form)
       });
 
-      if (!response.ok) {
-        throw new Error("Erreur réseau lors de la requête");
-      }
+      if (!response.ok) throw new Error("Erreur réseau");
 
       const data = await response.json();
       setResult(data);
-
-      Swal.fire({
-        title: '✅ Calcul effectué',
-        text: 'Le résultat a été enregistré avec succès !',
-        icon: 'success',
-        confirmButtonText: 'OK'
-      });
-
-
-      // Ajout à l'historique
       addToHistory({
         type: "Liaison Hertzienne",
         input: { ...form },
         output: data
       });
-    } catch (error) {
-        console.error("Erreur :", error);
-        Swal.fire({
-          title: "❌ Erreur réseau",
-          text: "Impossible de communiquer avec le serveur. Vérifie qu’il est bien lancé.",
-          icon: "error",
-          confirmButtonText: "Fermer"
-        });
-      }
 
+      Swal.fire({
+        title: "✅ Calcul effectué",
+        text: "Le résultat a été enregistré avec succès !",
+        icon: "success",
+        confirmButtonText: "OK"
+      });
+
+    } catch (error) {
+      Swal.fire({
+        title: "❌ Erreur réseau",
+        text: "Impossible de communiquer avec le serveur.",
+        icon: "error",
+        confirmButtonText: "Fermer"
+      });
+    }
+  };
+
+  const handleSimuler = () => {
+    const { pe, g1, g2, f, pertes } = form;
+    const c = 3e8;
+    const freq = parseFloat(f) * 1e9;
+    const lambda = c / freq;
+    const distances = [];
+    const pr_values = [];
+
+    for (let d = 1; d <= 100; d++) {
+      const d_m = d * 1000;
+      const L = 20 * Math.log10((4 * Math.PI * d_m) / lambda);
+      const pr =
+        parseFloat(pe) +
+        parseFloat(g1) +
+        parseFloat(g2) -
+        L -
+        parseFloat(pertes);
+      distances.push(d);
+      pr_values.push(pr.toFixed(2));
+    }
+
+    setGraphData({
+      labels: distances,
+      datasets: [
+        {
+          label: "Puissance reçue (dBm) vs Distance (km)",
+          data: pr_values,
+          borderColor: "rgb(75, 192, 192)",
+          fill: false,
+          tension: 0.1
+        }
+      ]
+    });
   };
 
   const getFormulaText = () => {
     const { pe, g1, g2, d, f, pertes } = form;
     const c = 3e8;
-    const lambda = c / (f * 1e9);
-    const distance = d * 1000;
-    const L = (20 * Math.log10((4 * Math.PI * distance) / lambda)).toFixed(2);
+    const freq = parseFloat(f) * 1e9;
+    const lambda = c / freq;
+    const d_m = parseFloat(d) * 1000;
+    const L = 20 * Math.log10((4 * Math.PI * d_m) / lambda).toFixed(2);
     const pr = (
       parseFloat(pe) +
       parseFloat(g1) +
@@ -76,17 +123,54 @@ export default function HertzianForm({ addToHistory }) {
 
     return (
       <div className="mt-4 p-3 bg-light rounded border">
-        <p><strong>Formule utilisée :</strong></p>
-        <p><code>P<sub>r</sub> = P<sub>e</sub> + G<sub>1</sub> + G<sub>2</sub> - L - α</code></p>
-        <p><code>P<sub>r</sub> = {pe} + {g1} + {g2} - {L} - {pertes} = <mark>{pr} dBm</mark></code></p>
-        <p><code>P<sub>r</sub>(μW) = 10<sup>{pr}/10</sup> × 1000 ≈ <mark>{pr_mw} μW</mark></code></p>
+        <h5>🧮 Étapes du calcul :</h5>
+        <p><strong>Formule :</strong> Pr = Pe + G1 + G2 - L - pertes</p>
+        <p>λ = c / f = 3×10⁸ / {f}×10⁹ = {lambda.toFixed(4)} m</p>
+        <p>L = 20·log₁₀(4π·{d_m} / {lambda.toFixed(4)}) = {L} dB</p>
+        <p>{pe} + {g1} + {g2} - {L} - {pertes} = <mark>{pr} dBm</mark></p>
+        <p>Conversion : 10<sup>{pr}/10</sup> × 1000 ≈ <mark>{pr_mw} μW</mark></p>
       </div>
     );
+  };
+
+  const getIllustration = () => {
+    const d = parseFloat(form.d);
+    if (isNaN(d)) return null;
+    if (d <= 10) return "/illustrations/distance_courte.png";
+    if (d <= 50) return "/illustrations/distance_moyenne.png";
+    return "/illustrations/distance_longue.png";
+  };
+
+  const handleExportPDF = async () => {
+    const input = reportRef.current;
+    const canvasReport = await html2canvas(input, { scale: 2 });
+    const imgData = canvasReport.toDataURL("image/png");
+
+    const pdf = new jsPDF("p", "mm", "a4");
+    const pageWidth = pdf.internal.pageSize.getWidth();
+
+    pdf.setFontSize(16);
+    pdf.text("📡 Rapport de dimensionnement – Liaison Hertzienne", 10, 15);
+
+    const height = (canvasReport.height * pageWidth) / canvasReport.width;
+    pdf.addImage(imgData, "PNG", 0, 20, pageWidth, height);
+
+    const canvasGraph = chartRef.current?.querySelector("canvas");
+    if (canvasGraph) {
+      const graphImg = canvasGraph.toDataURL("image/png");
+      pdf.addPage();
+      pdf.setFontSize(14);
+      pdf.text("📈 Graphique de simulation :", 10, 20);
+      pdf.addImage(graphImg, "PNG", 10, 30, pageWidth - 20, 80);
+    }
+
+    pdf.save("rapport_liaison_hertzienne.pdf");
   };
 
   return (
     <div className="container mt-5">
       <h2 className="mb-4">📡 Bilan de liaison hertzienne</h2>
+
       <div className="row">
         {[
           { name: "pe", label: "Puissance émission (dBm)" },
@@ -109,13 +193,52 @@ export default function HertzianForm({ addToHistory }) {
         ))}
       </div>
 
-      <button className="btn btn-primary" onClick={handleSubmit}>Calculer</button>
+      <div className="mb-3">
+        <button className="btn btn-success me-2" onClick={handleSubmit}>🧮 Calculer</button>
+        <button className="btn btn-primary me-2" onClick={handleSimuler}>📉 Simuler</button>
+        {result && (
+          <button className="btn btn-outline-dark" onClick={handleExportPDF}>📄 Générer le rapport PDF</button>
+        )}
+      </div>
 
-      {result && (
-        <>
-          <ResultCard result={result} />
-          {getFormulaText()}
-        </>
+      <div ref={reportRef} className="p-4 bg-white">
+        <h4 className="mb-3">📌 Paramètres saisis :</h4>
+        <ul>
+          <li><strong>Puissance émission :</strong> {form.pe} dBm</li>
+          <li><strong>Gain antenne 1 :</strong> {form.g1} dB</li>
+          <li><strong>Gain antenne 2 :</strong> {form.g2} dB</li>
+          <li><strong>Distance :</strong> {form.d} km</li>
+          <li><strong>Fréquence :</strong> {form.f} GHz</li>
+          <li><strong>Pertes :</strong> {form.pertes} dB</li>
+        </ul>
+
+        {result && (
+          <>
+            <h4 className="mt-4 mb-2">📊 Résultat :</h4>
+            <ResultCard result={result} />
+          </>
+        )}
+
+        <h4 className="mt-4 mb-2">🧠 Explication des étapes du calcul :</h4>
+        {getFormulaText()}
+
+        {result && (
+          <div className="mt-4">
+            <h4 className="mb-2">🖼️ Illustration associée :</h4>
+            <img
+              src={getIllustration()}
+              alt="Illustration dynamique"
+              style={{ maxWidth: "100%", height: "auto" }}
+            />
+          </div>
+        )}
+      </div>
+
+      {graphData && (
+        <div className="mt-5" ref={chartRef}>
+          <h4 className="mb-2">📈 Graphique de simulation :</h4>
+          <Line data={graphData} />
+        </div>
       )}
     </div>
   );
